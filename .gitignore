@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Source textures (downloaded from R2)
+sources/
+
+# Generated binaries
+output/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

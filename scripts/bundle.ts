@@ -1,0 +1,321 @@
+/**
+ * Material Bundler - Compile PBR textures into DataArrayTexture binaries
+ * 
+ * Usage:
+ *   npm run build           # Build both resolutions
+ *   npm run build:low       # Build only low-res (128x128)
+ *   npm run build:high      # Build only high-res (1024x1024)
+ */
+
+import sharp from 'sharp';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CONFIG_PATH = path.join(__dirname, '../config/materials.json');
+const SOURCES_DIR = path.join(__dirname, '../sources');
+const OUTPUT_DIR = path.join(__dirname, '../output');
+
+// Map types to their channel configurations
+const MAP_CHANNELS: Record<string, string> = {
+  albedo: 'rgba',
+  normal: 'rgba',
+  ao: 'r',
+  roughness: 'r',
+  metalness: 'r',
+};
+
+const CHANNEL_INDICES: Record<string, number> = { r: 0, g: 1, b: 2, a: 3 };
+
+interface MapConfig {
+  path?: string;
+  channel?: string;
+  color?: { r: number; g: number; b: number; alpha?: number };
+}
+
+interface MaterialConfig {
+  type: 'solid' | 'liquid' | 'transparent';
+  albedo?: MapConfig;
+  normal?: MapConfig;
+  ao?: MapConfig;
+  roughness?: MapConfig;
+  metalness?: MapConfig;
+}
+
+interface Config {
+  textureSize: { low: number; high: number };
+  materials: Record<string, MaterialConfig>;
+}
+
+interface ProcessedMap {
+  data: Buffer;
+  width: number;
+  height: number;
+  channels: string;
+}
+
+async function loadConfig(): Promise<Config> {
+  const configData = await fs.readFile(CONFIG_PATH, 'utf-8');
+  return JSON.parse(configData);
+}
+
+async function processImage(
+  mapPath: string | undefined,
+  mapConfig: MapConfig | undefined,
+  mapType: string,
+  textureSize: number
+): Promise<{ data: Buffer; info: sharp.OutputInfo }> {
+  if (mapConfig?.path) {
+    const fullPath = path.join(SOURCES_DIR, mapConfig.path);
+    
+    let image = sharp(fullPath)
+      .resize(textureSize, textureSize)
+      .ensureAlpha()
+      .raw();
+
+    // Normalize normal maps
+    if (mapType === 'normal') {
+      const { data, info } = await image.toBuffer({ resolveWithObject: true });
+      const { width, height, channels } = info;
+
+      // Find global min and max
+      let min = 255, max = 0;
+      for (let i = 0; i < data.length; i++) {
+        if (data[i] < min) min = data[i];
+        if (data[i] > max) max = data[i];
+      }
+
+      const range = max - min || 1;
+      const normalizedData = Buffer.alloc(data.length);
+      for (let i = 0; i < data.length; i++) {
+        normalizedData[i] = ((data[i] - min) * 255) / range;
+      }
+
+      return sharp(normalizedData, { raw: { width, height, channels } })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    }
+
+    return image.toBuffer({ resolveWithObject: true });
+  }
+
+  // Generate solid color texture
+  const background = {
+    r: mapConfig?.color?.r ?? 255,
+    g: mapConfig?.color?.g ?? 255,
+    b: mapConfig?.color?.b ?? 255,
+    alpha: mapConfig?.color?.alpha ?? 1.0,
+  };
+
+  return sharp({
+    create: {
+      width: textureSize,
+      height: textureSize,
+      channels: 4,
+      background,
+    },
+  })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+}
+
+function extractChannels(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  channelMapping: string
+): Buffer {
+  const channelSize = width * height;
+  const extractedData = Buffer.alloc(channelSize * channelMapping.length);
+
+  let channelWriteIndex = 0;
+  for (const channelLetter of channelMapping) {
+    const channelReadIndex = CHANNEL_INDICES[channelLetter.toLowerCase()];
+    for (let i = 0; i < channelSize; i++) {
+      extractedData[i * channelMapping.length + channelWriteIndex] =
+        data[i * channels + channelReadIndex];
+    }
+    channelWriteIndex++;
+  }
+
+  return extractedData;
+}
+
+function combineImages(images: ProcessedMap[]): {
+  combinedData: Buffer;
+  width: number;
+  height: number;
+  channels: string;
+  layers: number;
+} {
+  const width = images[0].width;
+  const height = images[0].height;
+  const channels = images[0].channels;
+  const layers = images.length;
+  const layerSize = width * height * channels.length;
+  const totalSize = layerSize * layers;
+  const combinedData = Buffer.alloc(totalSize);
+
+  images.forEach((image, index) => {
+    image.data.copy(combinedData, index * layerSize);
+  });
+
+  return { combinedData, width, height, channels, layers };
+}
+
+async function buildTextures(resolution: 'low' | 'high') {
+  const config = await loadConfig();
+  const textureSize = config.textureSize[resolution];
+  const outputPath = path.join(OUTPUT_DIR, resolution);
+
+  console.log(`\n🔧 Building ${resolution} resolution (${textureSize}×${textureSize})...\n`);
+
+  // Ensure output directory exists
+  await fs.mkdir(outputPath, { recursive: true });
+
+  const maps: Record<string, ProcessedMap[]> = {
+    albedo: [],
+    normal: [],
+    ao: [],
+    roughness: [],
+    metalness: [],
+  };
+
+  const materialIndices: Record<string, number> = {};
+  const materialTypes: Record<string, number[]> = {
+    solid: [],
+    liquid: [],
+    transparent: [],
+  };
+  const materialColors: string[] = [];
+  let materialIndex = 0;
+
+  const materialNames = Object.keys(config.materials);
+  console.log(`Processing ${materialNames.length} materials...\n`);
+
+  for (const materialName of materialNames) {
+    const material = config.materials[materialName];
+    materialIndices[materialName] = materialIndex++;
+    materialTypes[material.type].push(materialIndex);
+
+    for (const mapType of Object.keys(MAP_CHANNELS)) {
+      const mapConfig = material[mapType as keyof MaterialConfig] as MapConfig | undefined;
+
+      const { data, info } = await processImage(
+        mapConfig?.path,
+        mapConfig,
+        mapType,
+        textureSize
+      );
+
+      const { width, height, channels } = info;
+
+      // Determine which channel(s) to extract
+      let extractChannel = mapConfig?.channel || MAP_CHANNELS[mapType];
+      if (mapType === 'metalness') extractChannel = 'b';
+
+      // Calculate average color for albedo
+      if (mapType === 'albedo') {
+        const stats = await sharp(data, { raw: { width, height, channels } }).stats();
+        const toHex = (val: number) => Math.round(val).toString(16).padStart(2, '0');
+        const avgColorHex = `#${toHex(stats.channels[0].mean)}${toHex(stats.channels[1].mean)}${toHex(stats.channels[2].mean)}`;
+        materialColors.push(avgColorHex);
+      }
+
+      const dataExtracted = extractChannels(data, width, height, channels, extractChannel);
+
+      maps[mapType].push({
+        data: dataExtracted,
+        width,
+        height,
+        channels: MAP_CHANNELS[mapType],
+      });
+    }
+
+    process.stdout.write(`  ✓ ${materialName}\n`);
+  }
+
+  // Build pallet.json (only once, from the first resolution run)
+  const palletPath = path.join(OUTPUT_DIR, 'pallet.json');
+  let pallet: any;
+  
+  try {
+    const existingPallet = await fs.readFile(palletPath, 'utf-8');
+    pallet = JSON.parse(existingPallet);
+  } catch {
+    pallet = {
+      materials: materialNames,
+      maps: { low: {}, high: {} },
+      indicies: materialIndices,
+      types: materialTypes,
+      colors: materialColors,
+    };
+  }
+
+  // Write binary files for each map type
+  console.log(`\nWriting binary files...`);
+
+  for (const mapType of Object.keys(maps)) {
+    if (maps[mapType].length === 0) continue;
+
+    const { combinedData, width, height, layers } = combineImages(maps[mapType]);
+    const outputFile = path.join(outputPath, `${mapType}.bin`);
+    
+    await fs.writeFile(outputFile, combinedData);
+
+    const sizeMB = (combinedData.length / (1024 * 1024)).toFixed(2);
+    console.log(`  ✓ ${mapType}.bin (${sizeMB} MB)`);
+
+    pallet.maps[resolution][mapType] = {
+      width: textureSize,
+      height: textureSize,
+      channels: maps[mapType][0].channels,
+      layers,
+    };
+  }
+
+  // Write pallet.json
+  await fs.writeFile(palletPath, JSON.stringify(pallet));
+  console.log(`  ✓ pallet.json`);
+
+  console.log(`\n✅ ${resolution} build complete!`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  
+  // Parse --resolution flag
+  const resolutionArg = args.find(arg => arg.startsWith('--resolution='));
+  const resolution = resolutionArg?.split('=')[1] as 'low' | 'high' | undefined;
+
+  // Check sources exist
+  try {
+    await fs.access(SOURCES_DIR);
+  } catch {
+    console.log('❌ No sources directory found.');
+    console.log('   Run `npm run download-sources` to fetch textures from R2.');
+    process.exit(1);
+  }
+
+  // Ensure output directory exists
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
+
+  if (resolution === 'low') {
+    await buildTextures('low');
+  } else if (resolution === 'high') {
+    await buildTextures('high');
+  } else {
+    // Build both
+    await buildTextures('low');
+    await buildTextures('high');
+  }
+
+  console.log('\n🎉 All builds complete!');
+}
+
+main().catch(err => {
+  console.error('Build error:', err);
+  process.exit(1);
+});

@@ -1,0 +1,25 @@
+{
+  "name": "worldify-materials",
+  "version": "1.0.0",
+  "description": "PBR material bundler and R2 management for Worldify",
+  "type": "module",
+  "scripts": {
+    "download-sources": "tsx scripts/download-sources.ts",
+    "build": "tsx scripts/bundle.ts",
+    "build:low": "tsx scripts/bundle.ts --resolution=low",
+    "build:high": "tsx scripts/bundle.ts --resolution=high",
+    "upload": "tsx scripts/upload.ts",
+    "upload:sources": "tsx scripts/upload-sources.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.500.0",
+    "dotenv": "^16.4.0",
+    "glob": "^10.3.0",
+    "sharp": "^0.33.0"
+  }
+}
