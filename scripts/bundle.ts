@@ -244,13 +244,18 @@ async function buildTextures(resolution: 'low' | 'high') {
     process.stdout.write(`  ✓ ${materialName}\n`);
   }
 
-  // Build pallet.json (only once, from the first resolution run)
+  // Build pallet.json - always regenerate material data from config
   const palletPath = path.join(OUTPUT_DIR, 'pallet.json');
   let pallet: any;
   
   try {
     const existingPallet = await fs.readFile(palletPath, 'utf-8');
     pallet = JSON.parse(existingPallet);
+    // Update all material data from current config
+    pallet.materials = materialNames;
+    pallet.indicies = materialIndices;
+    pallet.types = materialTypes;
+    pallet.colors = materialColors;
   } catch {
     pallet = {
       materials: materialNames,
