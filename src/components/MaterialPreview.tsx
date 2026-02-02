@@ -175,6 +175,10 @@ function LoadedMaterial({
     return result;
   }, [texturePaths, textureMap]);
   
+  // Determine base values based on whether maps exist
+  const hasRoughnessMap = !!processedTextures.roughness;
+  const hasMetalnessMap = !!processedTextures.metalness;
+  
   return (
     <meshStandardMaterial
       ref={materialRef}
@@ -183,9 +187,9 @@ function LoadedMaterial({
       aoMap={processedTextures.ao ?? null}
       aoMapIntensity={1}
       roughnessMap={processedTextures.roughness ?? null}
-      roughness={1}
+      roughness={hasRoughnessMap ? 1 : 0.5}
       metalnessMap={processedTextures.metalness ?? null}
-      metalness={1}
+      metalness={hasMetalnessMap ? 1 : 0}
       envMapIntensity={envMapEnabled ? 1 : 0}
     />
   );
