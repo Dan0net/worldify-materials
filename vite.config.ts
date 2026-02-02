@@ -162,9 +162,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  define: {
-    'import.meta.env.VITE_MATERIAL_URL': JSON.stringify(
-      process.env.VITE_MATERIAL_URL || 'https://materials.worldify.io'
-    ),
-  },
+  // Only define VITE_MATERIAL_URL if explicitly set in environment
+  // Otherwise, let constants.ts fallback to '/materials' for local dev
+  ...(process.env.VITE_MATERIAL_URL && {
+    define: {
+      'import.meta.env.VITE_MATERIAL_URL': JSON.stringify(process.env.VITE_MATERIAL_URL),
+    },
+  }),
 });
