@@ -1089,6 +1089,20 @@
       },
       "enabled": true,
       "index": 50
+    },
+    "leaves_trans_3": {
+      "type": "solid",
+      "enabled": true,
+      "albedo": {
+        "path": "leaves_trans_3/leaves_trans_3_Color.png"
+      },
+      "normal": {
+        "path": "leaves_trans_3/leaves_trans_3_NormalDX.png"
+      },
+      "roughness": {
+        "path": "leaves_trans_3/leaves_trans_3_Roughness.png"
+      },
+      "index": 51
     }
   }
 }

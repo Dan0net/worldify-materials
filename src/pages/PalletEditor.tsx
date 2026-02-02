@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { MaterialPreview } from '../components/MaterialPreview';
 
 interface MapConfig {
   path?: string;
@@ -27,6 +28,7 @@ interface MaterialInfo {
   name: string;
   config: MaterialConfig;
   hasSourceFolder: boolean;
+  isUnconfigured: boolean;
   previewImage?: string;
 }
 
@@ -36,7 +38,7 @@ export function PalletEditor() {
   const [sourceFiles, setSourceFiles] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
+  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled' | 'unconfigured'>('all');
   const [search, setSearch] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
@@ -74,39 +76,74 @@ export function PalletEditor() {
     loadData();
   }, []);
 
-  // Compute unified material list
+  // Compute unified material list (configured + unconfigured source folders)
   const materials = useMemo<MaterialInfo[]>(() => {
     if (!materialsConfig) return [];
 
-    return Object.entries(materialsConfig.materials)
-      .map(([name, config]) => {
-        const files = sourceFiles[name] || [];
+    const result: MaterialInfo[] = [];
+
+    // Add configured materials
+    Object.entries(materialsConfig.materials).forEach(([name, config]) => {
+      const files = sourceFiles[name] || [];
+      const colorFile = files.find(
+        (f) => /color|albedo|diff|basecolor/i.test(f) && /\.(png|jpg|jpeg|webp)$/i.test(f)
+      );
+
+      result.push({
+        name,
+        config,
+        hasSourceFolder: sourceFolders.includes(name),
+        isUnconfigured: false,
+        previewImage: colorFile ? `/sources/${name}/${colorFile}` : undefined,
+      });
+    });
+
+    // Add unconfigured source folders with auto-detected config
+    sourceFolders.forEach((folderName) => {
+      if (!materialsConfig.materials[folderName]) {
+        const files = sourceFiles[folderName] || [];
         const colorFile = files.find(
           (f) => /color|albedo|diff|basecolor/i.test(f) && /\.(png|jpg|jpeg|webp)$/i.test(f)
         );
 
-        return {
-          name,
-          config,
-          hasSourceFolder: sourceFolders.includes(name),
-          previewImage: colorFile ? `/sources/${name}/${colorFile}` : undefined,
-        };
-      })
-      .sort((a, b) => {
-        const aEnabled = a.config.enabled !== false;
-        const bEnabled = b.config.enabled !== false;
+        // Auto-detect config from source files
+        const autoDetectedConfig = autoDetectMaterialConfig(folderName, files);
 
-        // Enabled materials come first, sorted by index
-        if (aEnabled && bEnabled) {
-          return (a.config.index ?? 9999) - (b.config.index ?? 9999);
-        }
-        if (aEnabled) return -1;
-        if (bEnabled) return 1;
+        result.push({
+          name: folderName,
+          config: autoDetectedConfig,
+          hasSourceFolder: true,
+          isUnconfigured: true,
+          previewImage: colorFile ? `/sources/${folderName}/${colorFile}` : undefined,
+        });
+      }
+    });
 
-        // Non-enabled materials sorted alphabetically
-        return a.name.localeCompare(b.name);
-      });
+    return result.sort((a, b) => {
+      const aEnabled = a.config.enabled !== false;
+      const bEnabled = b.config.enabled !== false;
+
+      // Enabled materials come first, sorted by index
+      if (aEnabled && bEnabled) {
+        return (a.config.index ?? 9999) - (b.config.index ?? 9999);
+      }
+      if (aEnabled) return -1;
+      if (bEnabled) return 1;
+
+      // Unconfigured materials come last
+      if (a.isUnconfigured !== b.isUnconfigured) {
+        return a.isUnconfigured ? 1 : -1;
+      }
+
+      // Non-enabled materials sorted alphabetically
+      return a.name.localeCompare(b.name);
+    });
   }, [materialsConfig, sourceFolders, sourceFiles]);
+
+  // Count unconfigured materials
+  const unconfiguredCount = useMemo(() => {
+    return materials.filter(m => m.isUnconfigured).length;
+  }, [materials]);
 
   // Filtered materials
   const filteredMaterials = useMemo(() => {
@@ -122,7 +159,9 @@ export function PalletEditor() {
         case 'enabled':
           return isEnabled;
         case 'disabled':
-          return !isEnabled;
+          return !isEnabled && !m.isUnconfigured;
+        case 'unconfigured':
+          return m.isUnconfigured;
         default:
           return true;
       }
@@ -144,7 +183,13 @@ export function PalletEditor() {
   const toggleMaterial = (name: string) => {
     if (!materialsConfig) return;
 
-    const material = materialsConfig.materials[name];
+    // If material doesn't exist in config yet (unconfigured), get auto-detected config
+    let material = materialsConfig.materials[name];
+    if (!material) {
+      const materialInfo = materials.find(m => m.name === name);
+      if (!materialInfo) return;
+      material = materialInfo.config;
+    }
     const isCurrentlyEnabled = material.enabled !== false;
 
     const updatedMaterial = {
@@ -212,13 +257,48 @@ export function PalletEditor() {
   const updateMaterialConfig = (name: string, updates: Partial<MaterialConfig>) => {
     if (!materialsConfig) return;
 
+    // If material doesn't exist in config yet (unconfigured), get auto-detected config from materials list
+    const existingConfig = materialsConfig.materials[name] ?? 
+      materials.find(m => m.name === name)?.config ?? 
+      { type: 'solid' as const, enabled: false };
+
     const newMaterials = {
       ...materialsConfig.materials,
-      [name]: { ...materialsConfig.materials[name], ...updates },
+      [name]: { ...existingConfig, ...updates },
     };
 
     setMaterialsConfig({ ...materialsConfig, materials: newMaterials });
     setHasChanges(true);
+  };
+
+  // Add unconfigured material to config (used when selecting an unconfigured material)
+  const addUnconfiguredMaterial = (name: string) => {
+    if (!materialsConfig || materialsConfig.materials[name]) return;
+
+    const materialInfo = materials.find(m => m.name === name);
+    if (!materialInfo) return;
+
+    const newMaterials = {
+      ...materialsConfig.materials,
+      [name]: { ...materialInfo.config },
+    };
+
+    setMaterialsConfig({ ...materialsConfig, materials: newMaterials });
+    setHasChanges(true);
+  };
+
+  // Handle material selection
+  const handleSelectMaterial = (name: string) => {
+    if (selectedMaterial === name) {
+      setSelectedMaterial(null);
+    } else {
+      // If it's an unconfigured material, add it to config first
+      const materialInfo = materials.find(m => m.name === name);
+      if (materialInfo?.isUnconfigured) {
+        addUnconfiguredMaterial(name);
+      }
+      setSelectedMaterial(name);
+    }
   };
 
   // Save changes
@@ -300,19 +380,20 @@ export function PalletEditor() {
           />
 
           <div className="flex gap-2">
-            {(['all', 'enabled', 'disabled'] as const).map((f) => (
+            {(['all', 'enabled', 'disabled', 'unconfigured'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`px-3 py-1 rounded text-sm ${
                   filter === f
-                    ? 'bg-blue-600 text-white'
+                    ? f === 'unconfigured' ? 'bg-yellow-600 text-white' : 'bg-blue-600 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)}
                 {f === 'enabled' && ` (${enabledCount})`}
-                {f === 'disabled' && ` (${totalCount - enabledCount})`}
+                {f === 'disabled' && ` (${totalCount - enabledCount - unconfiguredCount})`}
+                {f === 'unconfigured' && ` (${unconfiguredCount})`}
               </button>
             ))}
           </div>
@@ -329,9 +410,7 @@ export function PalletEditor() {
                 material={material}
                 maxIndex={enabledMaterials.length - 1}
                 isSelected={selectedMaterial === material.name}
-                onSelect={() => setSelectedMaterial(
-                  selectedMaterial === material.name ? null : material.name
-                )}
+                onSelect={() => handleSelectMaterial(material.name)}
                 onToggle={() => toggleMaterial(material.name)}
                 onMoveUp={() => moveMaterial(material.name, 'up')}
                 onMoveDown={() => moveMaterial(material.name, 'down')}
@@ -353,10 +432,12 @@ export function PalletEditor() {
         </div>
 
         {/* Material Config Panel */}
-        {selectedMaterial && materialsConfig?.materials[selectedMaterial] && (
+        {selectedMaterial && (
           <MaterialConfigPanel
             name={selectedMaterial}
-            config={materialsConfig.materials[selectedMaterial]}
+            config={materialsConfig?.materials[selectedMaterial] ?? 
+              materials.find(m => m.name === selectedMaterial)?.config ?? 
+              { type: 'solid', enabled: false }}
             files={sourceFiles[selectedMaterial] || []}
             hasSourceFolder={sourceFolders.includes(selectedMaterial)}
             onUpdateConfig={(updates) => updateMaterialConfig(selectedMaterial, updates)}
@@ -387,6 +468,27 @@ const MAP_PATTERNS: Record<MapType, RegExp> = {
   roughness: /rough|_rgh_|roughness/i,
   metalness: /metal|_met_|metallic|metalness/i,
 };
+
+// Auto-detect material config from source files
+function autoDetectMaterialConfig(folderName: string, files: string[]): MaterialConfig {
+  const config: MaterialConfig = {
+    type: 'solid',
+    enabled: false,
+  };
+
+  for (const file of files) {
+    const detectedType = detectMapType(file);
+    if (detectedType && !config[detectedType]?.path) {
+      const channel = detectChannel(file, detectedType);
+      config[detectedType] = {
+        path: `${folderName}/${file}`,
+        ...(channel ? { channel } : {}),
+      };
+    }
+  }
+
+  return config;
+}
 
 // Detect map type from filename
 function detectMapType(filename: string): MapType | null {
@@ -428,6 +530,7 @@ function MaterialConfigPanel({
   onClose,
 }: MaterialConfigPanelProps) {
   const [selectedLayer, setSelectedLayer] = useState<MapType>('albedo');
+  const [showPreview, setShowPreview] = useState(true);
 
   // Get the currently assigned file for each map type
   const getAssignedFile = (mapType: MapType): string | undefined => {
@@ -504,6 +607,26 @@ function MaterialConfigPanel({
         >
           ×
         </button>
+      </div>
+
+      {/* 3D Preview */}
+      <div className="p-3 border-b border-gray-700">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs text-gray-400">3D Preview</label>
+          <button
+            onClick={() => setShowPreview(!showPreview)}
+            className="text-xs text-gray-400 hover:text-white"
+          >
+            {showPreview ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {showPreview && (
+          <MaterialPreview
+            materialName={name}
+            config={config}
+            height={200}
+          />
+        )}
       </div>
 
       {/* Layer Selection + Channel */}
@@ -798,6 +921,11 @@ function MaterialCard({
           {!material.hasSourceFolder && (
             <span className="bg-red-600 text-white text-xs px-1 py-0.5 rounded" title="No source folder">
               ?
+            </span>
+          )}
+          {material.isUnconfigured && (
+            <span className="bg-yellow-600 text-white text-xs px-1 py-0.5 rounded" title="New - not in config">
+              NEW
             </span>
           )}
         </div>
