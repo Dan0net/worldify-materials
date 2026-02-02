@@ -32,12 +32,16 @@ export function Home() {
             </p>
           </Link>
 
-          <div className="block p-6 bg-gray-800 rounded-lg border border-gray-700 opacity-50">
+          <Link
+            to="/pallet"
+            className="block p-6 bg-gray-800 rounded-lg border border-gray-700 hover:border-purple-500 transition-colors"
+          >
             <h2 className="text-xl font-semibold mb-2">Pallet Editor</h2>
             <p className="text-gray-400">
-              Configure material types, colors, and properties. Coming soon.
+              Configure which materials are included in the final bundle. Enable/disable materials,
+              reorder them, and see which source folders are configured.
             </p>
-          </div>
+          </Link>
 
           <div className="block p-6 bg-gray-800 rounded-lg border border-gray-700 opacity-50">
             <h2 className="text-xl font-semibold mb-2">Texture Preview</h2>
