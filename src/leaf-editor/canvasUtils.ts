@@ -8,21 +8,24 @@ import type { LeafBounds, PlacedLeaf, LoadedAtlas, LayerType } from './types';
  * Extract a leaf region from a source layer
  */
 export function extractLeafRegion(
-  sourceCanvas: HTMLCanvasElement,
+  source: HTMLCanvasElement | HTMLImageElement,
   bounds: LeafBounds,
   padding: number = 2
 ): HTMLCanvasElement {
+  const sourceWidth = source instanceof HTMLCanvasElement ? source.width : source.naturalWidth;
+  const sourceHeight = source instanceof HTMLCanvasElement ? source.height : source.naturalHeight;
+  
   const x = Math.max(0, bounds.x - padding);
   const y = Math.max(0, bounds.y - padding);
-  const w = Math.min(bounds.width + padding * 2, sourceCanvas.width - x);
-  const h = Math.min(bounds.height + padding * 2, sourceCanvas.height - y);
+  const w = Math.min(bounds.width + padding * 2, sourceWidth - x);
+  const h = Math.min(bounds.height + padding * 2, sourceHeight - y);
   
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
   
-  ctx.drawImage(sourceCanvas, x, y, w, h, 0, 0, w, h);
+  ctx.drawImage(source, x, y, w, h, 0, 0, w, h);
   
   return canvas;
 }

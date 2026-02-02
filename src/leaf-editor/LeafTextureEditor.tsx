@@ -46,6 +46,7 @@ export function LeafTextureEditor() {
   // View state
   const [activeLayer, setActiveLayer] = useState<LayerType>('Color');
   const [showBounds, setShowBounds] = useState(true);
+  const [showCombined, setShowCombined] = useState(true); // Show Color+Opacity combined
   
   // Export state
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -55,6 +56,49 @@ export function LeafTextureEditor() {
   // Canvas refs
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Auto-extract all leaves and add them to output
+  const autoAddAllLeaves = useCallback((loadedAtlas: LoadedAtlas, leaves: LeafBounds[]) => {
+    // Extract all leaves for all layers
+    const newExtracted = new Map<number, Map<LayerType, HTMLCanvasElement>>();
+    
+    for (const leaf of leaves) {
+      const layerCanvases = new Map<LayerType, HTMLCanvasElement>();
+      
+      for (const [layerType, layer] of loadedAtlas.layers) {
+        if (!layer.image) continue;
+        const extracted = extractLeafRegion(layer.image, leaf);
+        layerCanvases.set(layerType, extracted);
+      }
+      
+      newExtracted.set(leaf.id, layerCanvases);
+    }
+    
+    setExtractedLeaves(newExtracted);
+    
+    // Place all leaves in a grid pattern
+    const newPlaced: PlacedLeaf[] = [];
+    const cols = Math.ceil(Math.sqrt(leaves.length));
+    const spacing = OUTPUT_SIZE / (cols + 1);
+    
+    leaves.forEach((leaf, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      
+      newPlaced.push({
+        id: `leaf_${Date.now()}_${index}`,
+        sourceId: leaf.id,
+        x: spacing * (col + 1),
+        y: spacing * (row + 1),
+        rotation: 0,
+        scale: 1,
+        flipX: false,
+        flipY: false,
+      });
+    });
+    
+    setPlacedLeaves(newPlaced);
+  }, []);
 
   // Handle loading from source browser
   const handleLoadFromSources = useCallback(async (folderName: string, files: { name: string; url: string }[]) => {
@@ -73,6 +117,11 @@ export function LeafTextureEditor() {
         setOpacitySource(source);
         const leaves = detectLeaves(imageData, threshold, minArea, useAlpha);
         setDetectedLeaves(leaves);
+        
+        // Auto-select all leaves and add to output
+        if (leaves.length > 0) {
+          autoAddAllLeaves(loadedAtlas, leaves);
+        }
       } else {
         setOpacitySource('none');
         setDetectedLeaves([]);
@@ -83,7 +132,7 @@ export function LeafTextureEditor() {
     } finally {
       setLoading(false);
     }
-  }, [threshold, minArea]);
+  }, [threshold, minArea, autoAddAllLeaves]);
 
   // Handle file drop/selection
   const handleFiles = useCallback(async (files: FileList | File[]) => {
@@ -111,6 +160,11 @@ export function LeafTextureEditor() {
         setOpacitySource(source);
         const leaves = detectLeaves(imageData, threshold, minArea, useAlpha);
         setDetectedLeaves(leaves);
+        
+        // Auto-select all leaves and add to output
+        if (leaves.length > 0) {
+          autoAddAllLeaves(loadedAtlas, leaves);
+        }
       } else {
         setOpacitySource('none');
         setDetectedLeaves([]);
@@ -121,7 +175,7 @@ export function LeafTextureEditor() {
     } finally {
       setLoading(false);
     }
-  }, [threshold, minArea]);
+  }, [threshold, minArea, autoAddAllLeaves]);
 
   // Re-detect leaves when threshold/minArea changes
   useEffect(() => {
@@ -145,14 +199,58 @@ export function LeafTextureEditor() {
     const canvas = sourceCanvasRef.current;
     const ctx = canvas.getContext('2d')!;
     
+    const colorLayer = atlas.layers.get('Color');
+    const opacityLayer = atlas.layers.get('Opacity');
     const layer = atlas.layers.get(activeLayer);
-    if (!layer?.image) return;
+    
+    // For combined view, we need Color layer at minimum
+    if (showCombined && !colorLayer?.image) return;
+    if (!showCombined && !layer?.image) return;
     
     canvas.width = atlas.width * PREVIEW_SCALE;
     canvas.height = atlas.height * PREVIEW_SCALE;
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(layer.image, 0, 0, canvas.width, canvas.height);
+    
+    if (showCombined && colorLayer?.image) {
+      // Draw combined Color + Opacity view
+      // First draw color to a temp canvas
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = atlas.width;
+      tempCanvas.height = atlas.height;
+      const tempCtx = tempCanvas.getContext('2d')!;
+      tempCtx.drawImage(colorLayer.image, 0, 0);
+      
+      // Apply opacity as alpha channel
+      if (opacityLayer?.image) {
+        const opacityCanvas = document.createElement('canvas');
+        opacityCanvas.width = atlas.width;
+        opacityCanvas.height = atlas.height;
+        const opacityCtx = opacityCanvas.getContext('2d')!;
+        opacityCtx.drawImage(opacityLayer.image, 0, 0);
+        const opacityData = opacityCtx.getImageData(0, 0, atlas.width, atlas.height);
+        
+        const colorData = tempCtx.getImageData(0, 0, atlas.width, atlas.height);
+        for (let i = 0; i < colorData.data.length; i += 4) {
+          // Use red channel of opacity image as alpha
+          colorData.data[i + 3] = opacityData.data[i];
+        }
+        tempCtx.putImageData(colorData, 0, 0);
+      }
+      
+      // Draw checkerboard background for transparency
+      const checkerSize = 8;
+      for (let y = 0; y < canvas.height; y += checkerSize) {
+        for (let x = 0; x < canvas.width; x += checkerSize) {
+          ctx.fillStyle = ((x + y) / checkerSize) % 2 === 0 ? '#444' : '#666';
+          ctx.fillRect(x, y, checkerSize, checkerSize);
+        }
+      }
+      
+      ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+    } else if (layer?.image) {
+      ctx.drawImage(layer.image, 0, 0, canvas.width, canvas.height);
+    }
     
     // Draw detected leaf bounds
     if (showBounds) {
@@ -178,7 +276,7 @@ export function LeafTextureEditor() {
         );
       }
     }
-  }, [atlas, activeLayer, detectedLeaves, selectedLeafIds, showBounds]);
+  }, [atlas, activeLayer, detectedLeaves, selectedLeafIds, showBounds, showCombined]);
 
   // Render output canvas
   useEffect(() => {
@@ -204,7 +302,39 @@ export function LeafTextureEditor() {
       const leafLayers = extractedLeaves.get(placed.sourceId);
       if (!leafLayers) continue;
       
-      const leafCanvas = leafLayers.get(activeLayer);
+      // For combined view, composite Color + Opacity
+      let leafCanvas: HTMLCanvasElement | undefined;
+      
+      if (showCombined) {
+        const colorCanvas = leafLayers.get('Color');
+        const opacityCanvas = leafLayers.get('Opacity');
+        
+        if (colorCanvas) {
+          // Create composited canvas
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = colorCanvas.width;
+          tempCanvas.height = colorCanvas.height;
+          const tempCtx = tempCanvas.getContext('2d')!;
+          tempCtx.drawImage(colorCanvas, 0, 0);
+          
+          if (opacityCanvas) {
+            const colorData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const opacityCtx = opacityCanvas.getContext('2d')!;
+            const opacityData = opacityCtx.getImageData(0, 0, opacityCanvas.width, opacityCanvas.height);
+            
+            for (let i = 0; i < colorData.data.length; i += 4) {
+              // Use red channel of opacity as alpha, multiply with existing alpha
+              colorData.data[i + 3] = Math.round((colorData.data[i + 3] * opacityData.data[i]) / 255);
+            }
+            tempCtx.putImageData(colorData, 0, 0);
+          }
+          
+          leafCanvas = tempCanvas;
+        }
+      } else {
+        leafCanvas = leafLayers.get(activeLayer);
+      }
+      
       if (!leafCanvas) continue;
       
       // Highlight selected
@@ -228,7 +358,7 @@ export function LeafTextureEditor() {
     }
     
     ctx.restore();
-  }, [placedLeaves, extractedLeaves, activeLayer, selectedPlacedId, detectedLeaves]);
+  }, [placedLeaves, extractedLeaves, activeLayer, selectedPlacedId, detectedLeaves, showCombined]);
 
   // Click on source canvas to select/deselect leaves
   const handleSourceClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -628,13 +758,13 @@ export function LeafTextureEditor() {
 
           {/* Layer tabs */}
           {atlas && (
-            <div className="p-2 bg-gray-800 border-t border-gray-700 flex gap-1">
+            <div className="p-2 bg-gray-800 border-t border-gray-700 flex gap-1 items-center">
               {Array.from(atlas.layers.keys()).map(layer => (
                 <button
                   key={layer}
                   onClick={() => setActiveLayer(layer)}
                   className={`px-3 py-1 rounded text-sm ${
-                    activeLayer === layer 
+                    activeLayer === layer && !showCombined
                       ? 'bg-blue-600 text-white' 
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
@@ -642,6 +772,18 @@ export function LeafTextureEditor() {
                   {layer}
                 </button>
               ))}
+              <div className="w-px h-6 bg-gray-600 mx-1" />
+              <button
+                onClick={() => setShowCombined(!showCombined)}
+                className={`px-3 py-1 rounded text-sm ${
+                  showCombined 
+                    ? 'bg-purple-600 text-white' 
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+                title="Show Color with Opacity as transparency"
+              >
+                Combined
+              </button>
             </div>
           )}
         </div>
