@@ -7,6 +7,9 @@ sources/
 # Generated binaries
 output/
 
+# Build output
+dist/
+
 # Environment
 .env
 .env.local

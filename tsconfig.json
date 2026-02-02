@@ -8,8 +8,14 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "./dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["scripts/**/*", "config/**/*"],
-  "exclude": ["node_modules", "sources", "output"]
+  "include": ["scripts/**/*", "config/**/*", "src/**/*"],
+  "exclude": ["node_modules", "sources", "output", "dist"]
 }
