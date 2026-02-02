@@ -36,6 +36,8 @@ interface MapConfig {
 
 interface MaterialConfig {
   type: 'solid' | 'liquid' | 'transparent';
+  enabled?: boolean;
+  index?: number;
   albedo?: MapConfig;
   normal?: MapConfig;
   ao?: MapConfig;
@@ -192,8 +194,13 @@ async function buildTextures(resolution: 'low' | 'high') {
   const materialColors: string[] = [];
   let materialIndex = 0;
 
-  const materialNames = Object.keys(config.materials);
-  console.log(`Processing ${materialNames.length} materials...\n`);
+  // Get enabled materials sorted by index
+  const materialNames = Object.entries(config.materials)
+    .filter(([_, mat]) => mat.enabled !== false)
+    .sort((a, b) => (a[1].index ?? 9999) - (b[1].index ?? 9999))
+    .map(([name]) => name);
+
+  console.log(`Processing ${materialNames.length} enabled materials...\n`);
 
   for (const materialName of materialNames) {
     const material = config.materials[materialName];

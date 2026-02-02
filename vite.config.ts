@@ -113,40 +113,7 @@ export default defineConfig({
           }
         });
 
-        // Get pallet.json
-        server.middlewares.use('/api/pallet', (req, res, next) => {
-          if (req.method === 'GET') {
-            const palletPath = path.join(__dirname, 'sources', 'pallet.json');
-            try {
-              const data = fs.readFileSync(palletPath, 'utf-8');
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(data);
-            } catch {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: 'Failed to read pallet.json' }));
-            }
-          } else if (req.method === 'POST' || req.method === 'PUT') {
-            const chunks: Buffer[] = [];
-            req.on('data', (chunk: Buffer) => chunks.push(chunk));
-            req.on('end', () => {
-              try {
-                const body = JSON.parse(Buffer.concat(chunks).toString());
-                const palletPath = path.join(__dirname, 'sources', 'pallet.json');
-                fs.writeFileSync(palletPath, JSON.stringify(body, null, 2));
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ success: true }));
-              } catch (err) {
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: String(err) }));
-              }
-            });
-          } else {
-            next();
-          }
-        });
-
-        // Get materials.json config
+        // Get/save materials.json config
         server.middlewares.use('/api/materials-config', (req, res, next) => {
           if (req.method === 'GET') {
             const configPath = path.join(__dirname, 'config', 'materials.json');
