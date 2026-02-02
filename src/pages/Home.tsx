@@ -21,6 +21,17 @@ export function Home() {
             </p>
           </Link>
 
+          <Link
+            to="/leaf-editor"
+            className="block p-6 bg-gray-800 rounded-lg border border-gray-700 hover:border-green-500 transition-colors"
+          >
+            <h2 className="text-xl font-semibold mb-2">Leaf Texture Editor</h2>
+            <p className="text-gray-400">
+              Extract individual leaves from atlas textures and arrange them into tileable PBR texture sets.
+              Supports Color, Opacity, Normal, Roughness, and Displacement layers.
+            </p>
+          </Link>
+
           <div className="block p-6 bg-gray-800 rounded-lg border border-gray-700 opacity-50">
             <h2 className="text-xl font-semibold mb-2">Pallet Editor</h2>
             <p className="text-gray-400">
