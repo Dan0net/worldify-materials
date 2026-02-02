@@ -57,8 +57,8 @@ export function LeafTextureEditor() {
   const [scatterSettings, setScatterSettings] = useState<ScatterSettings[]>([]);
   const [gridCells, setGridCells] = useState(5);           // N×N grid
   const [jitterAmount, setJitterAmount] = useState(0.5);   // 0-1, fraction of cell size
-  const [scaleMin, setScaleMin] = useState(0.8);           // Proportional to cell size
-  const [scaleMax, setScaleMax] = useState(1.0);
+  const [scaleBase, setScaleBase] = useState(1.0);         // Base scale multiplier
+  const [scaleJitter, setScaleJitter] = useState(0.2);     // Random range ±jitter around base
   
   // Canvas refs
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -169,9 +169,9 @@ export function LeafTextureEditor() {
         // Random rotation 0-360
         const rotation = Math.random() * 360;
         
-        // Random scale within range, proportional to cell size
-        const scaleMultiplier = scaleMin + Math.random() * (scaleMax - scaleMin);
-        const scale = baseScale * scaleMultiplier;
+        // Random scale with jitter around base value
+        const scaleMultiplier = scaleBase + (Math.random() - 0.5) * 2 * scaleJitter;
+        const scale = baseScale * Math.max(0.1, scaleMultiplier);
         
         // Random flips
         const flipX = Math.random() > 0.5;
@@ -205,7 +205,7 @@ export function LeafTextureEditor() {
     newPlaced.sort((a, b) => a.zIndex - b.zIndex);
     
     setPlacedLeaves(newPlaced);
-  }, [scatterSettings, extractedLeaves, gridCells, jitterAmount, scaleMin, scaleMax]);
+  }, [scatterSettings, extractedLeaves, gridCells, jitterAmount, scaleBase, scaleJitter]);
 
   // Update probability for a specific leaf
   const updateProbability = useCallback((sourceId: number, probability: number) => {
@@ -318,7 +318,7 @@ export function LeafTextureEditor() {
     if (extractedLeaves.size > 0 && scatterSettings.length > 0) {
       scatterLeaves();
     }
-  }, [gridCells, jitterAmount, scaleMin, scaleMax, scatterSettings, extractedLeaves.size]);
+  }, [gridCells, jitterAmount, scaleBase, scaleJitter, scatterSettings, extractedLeaves.size]);
 
   // Render source canvas with detected bounds overlay
   useEffect(() => {
@@ -995,16 +995,15 @@ export function LeafTextureEditor() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-gray-400">Grid:</span>
                     <input
-                      type="number"
+                      type="range"
                       min="1"
-                      max="20"
+                      max="12"
+                      step="1"
                       value={gridCells}
-                      onChange={(e) => setGridCells(Math.max(1, Number(e.target.value)))}
-                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                      onChange={(e) => setGridCells(Number(e.target.value))}
+                      className="w-20"
                     />
-                    <span className="text-gray-500">×</span>
-                    <span className="text-gray-400">{gridCells}</span>
-                    <span className="text-gray-500 ml-1">({gridCells * gridCells} leaves)</span>
+                    <span className="text-gray-400 w-16">{gridCells}×{gridCells} ({gridCells * gridCells})</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-gray-400">Jitter:</span>
@@ -1022,24 +1021,26 @@ export function LeafTextureEditor() {
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-gray-400">Scale:</span>
                     <input
-                      type="number"
-                      min="0.1"
-                      max="5"
-                      step="0.1"
-                      value={scaleMin}
-                      onChange={(e) => setScaleMin(Number(e.target.value))}
-                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                      type="range"
+                      min="0.2"
+                      max="2"
+                      step="0.05"
+                      value={scaleBase}
+                      onChange={(e) => setScaleBase(Number(e.target.value))}
+                      className="w-16"
                     />
-                    <span className="text-gray-500">-</span>
+                    <span className="text-gray-400 w-10">{scaleBase.toFixed(2)}</span>
+                    <span className="text-gray-500">±</span>
                     <input
-                      type="number"
-                      min="0.1"
-                      max="5"
-                      step="0.1"
-                      value={scaleMax}
-                      onChange={(e) => setScaleMax(Number(e.target.value))}
-                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                      type="range"
+                      min="0"
+                      max="0.5"
+                      step="0.05"
+                      value={scaleJitter}
+                      onChange={(e) => setScaleJitter(Number(e.target.value))}
+                      className="w-12"
                     />
+                    <span className="text-gray-400 w-8">{Math.round(scaleJitter * 100)}%</span>
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 mb-2">Leaf probabilities (higher = more likely to be selected):</div>
