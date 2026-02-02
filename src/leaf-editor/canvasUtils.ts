@@ -31,36 +31,87 @@ export function extractLeafRegion(
 }
 
 /**
- * Draw a placed leaf onto a destination canvas with transforms
+ * Draw a single leaf instance at a specific position
  */
-export function drawPlacedLeaf(
+function drawLeafAt(
   ctx: CanvasRenderingContext2D,
   leafCanvas: HTMLCanvasElement,
-  placed: PlacedLeaf,
-  bounds: LeafBounds
+  x: number,
+  y: number,
+  rotation: number,
+  scale: number,
+  flipX: boolean,
+  flipY: boolean
 ): void {
   ctx.save();
-  
-  // Move to placement position (center of leaf)
-  ctx.translate(placed.x, placed.y);
-  
-  // Apply rotation
-  ctx.rotate((placed.rotation * Math.PI) / 180);
-  
-  // Apply scale and flip
+  ctx.translate(x, y);
+  ctx.rotate((rotation * Math.PI) / 180);
   ctx.scale(
-    placed.scale * (placed.flipX ? -1 : 1),
-    placed.scale * (placed.flipY ? -1 : 1)
+    scale * (flipX ? -1 : 1),
+    scale * (flipY ? -1 : 1)
   );
-  
-  // Draw centered
   ctx.drawImage(
     leafCanvas,
     -leafCanvas.width / 2,
     -leafCanvas.height / 2
   );
-  
   ctx.restore();
+}
+
+/**
+ * Draw a placed leaf onto a destination canvas with transforms
+ * Handles edge tiling by drawing wrapped copies when near edges
+ */
+export function drawPlacedLeaf(
+  ctx: CanvasRenderingContext2D,
+  leafCanvas: HTMLCanvasElement,
+  placed: PlacedLeaf,
+  bounds: LeafBounds,
+  outputSize: number = 1024
+): void {
+  const { x, y, rotation, scale, flipX, flipY } = placed;
+  
+  // Estimate the leaf's bounding radius after scale
+  const radius = Math.max(leafCanvas.width, leafCanvas.height) * scale / 2;
+  
+  // Collect all positions where this leaf should be drawn
+  const positions: Array<{ x: number; y: number }> = [{ x, y }];
+  
+  // Check if we need to wrap on edges
+  // Left edge - also draw on right side
+  if (x - radius < 0) {
+    positions.push({ x: x + outputSize, y });
+  }
+  // Right edge - also draw on left side
+  if (x + radius > outputSize) {
+    positions.push({ x: x - outputSize, y });
+  }
+  // Top edge - also draw on bottom
+  if (y - radius < 0) {
+    positions.push({ x, y: y + outputSize });
+  }
+  // Bottom edge - also draw on top
+  if (y + radius > outputSize) {
+    positions.push({ x, y: y - outputSize });
+  }
+  // Handle corners (need to draw on diagonal wrap)
+  if (x - radius < 0 && y - radius < 0) {
+    positions.push({ x: x + outputSize, y: y + outputSize });
+  }
+  if (x + radius > outputSize && y - radius < 0) {
+    positions.push({ x: x - outputSize, y: y + outputSize });
+  }
+  if (x - radius < 0 && y + radius > outputSize) {
+    positions.push({ x: x + outputSize, y: y - outputSize });
+  }
+  if (x + radius > outputSize && y + radius > outputSize) {
+    positions.push({ x: x - outputSize, y: y - outputSize });
+  }
+  
+  // Draw at all positions
+  for (const pos of positions) {
+    drawLeafAt(ctx, leafCanvas, pos.x, pos.y, rotation, scale, flipX, flipY);
+  }
 }
 
 /**
@@ -103,7 +154,7 @@ export function renderOutput(
     const leafCanvas = leafLayers.get(layerType);
     if (!leafCanvas) continue;
     
-    drawPlacedLeaf(ctx, leafCanvas, placed, bounds);
+    drawPlacedLeaf(ctx, leafCanvas, placed, bounds, outputSize);
   }
   
   return canvas;

@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { detectLeaves, hasAlphaChannel } from './leafDetection';
 import { extractLeafRegion, drawPlacedLeaf, downloadCanvas } from './canvasUtils';
 import { SourceBrowser } from './SourceBrowser';
-import type { LeafBounds, PlacedLeaf, LoadedAtlas, LayerType, TextureLayer } from './types';
+import type { LeafBounds, PlacedLeaf, LoadedAtlas, LayerType, TextureLayer, ScatterSettings } from './types';
 import { LAYER_PATTERNS, REQUIRED_LAYERS, OPTIONAL_LAYERS } from './types';
 
 // Output canvas size
@@ -53,6 +53,13 @@ export function LeafTextureEditor() {
   const [exportFolderName, setExportFolderName] = useState('');
   const [exporting, setExporting] = useState(false);
   
+  // Scatter state - grid based
+  const [scatterSettings, setScatterSettings] = useState<ScatterSettings[]>([]);
+  const [gridCells, setGridCells] = useState(5);           // N×N grid
+  const [jitterAmount, setJitterAmount] = useState(0.5);   // 0-1, fraction of cell size
+  const [scaleMin, setScaleMin] = useState(0.8);           // Proportional to cell size
+  const [scaleMax, setScaleMax] = useState(1.0);
+  
   // Canvas refs
   const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -76,6 +83,14 @@ export function LeafTextureEditor() {
     
     setExtractedLeaves(newExtracted);
     
+    // Initialize scatter settings for each leaf (equal probability)
+    const newScatterSettings: ScatterSettings[] = leaves.map(leaf => ({
+      sourceId: leaf.id,
+      probability: 1.0,  // Equal weight
+      enabled: true,
+    }));
+    setScatterSettings(newScatterSettings);
+    
     // Place all leaves in a grid pattern
     const newPlaced: PlacedLeaf[] = [];
     const cols = Math.ceil(Math.sqrt(leaves.length));
@@ -94,10 +109,116 @@ export function LeafTextureEditor() {
         scale: 1,
         flipX: false,
         flipY: false,
+        zIndex: index,
       });
     });
     
     setPlacedLeaves(newPlaced);
+  }, []);
+
+  // Grid-based scatter with weighted random selection
+  const scatterLeaves = useCallback(() => {
+    // Get enabled sources with their probabilities
+    const enabledSources = scatterSettings.filter(s => s.enabled && s.probability > 0 && extractedLeaves.has(s.sourceId));
+    if (enabledSources.length === 0) return;
+    
+    // Calculate total probability for weighted selection
+    const totalProbability = enabledSources.reduce((sum, s) => sum + s.probability, 0);
+    
+    // Select a random source based on probability weights
+    const selectRandomSource = (): number => {
+      let random = Math.random() * totalProbability;
+      for (const source of enabledSources) {
+        random -= source.probability;
+        if (random <= 0) return source.sourceId;
+      }
+      return enabledSources[enabledSources.length - 1].sourceId;
+    };
+    
+    const newPlaced: PlacedLeaf[] = [];
+    const cellSize = OUTPUT_SIZE / gridCells;
+    let zIndex = 0;
+    
+    // Iterate over grid cells
+    for (let row = 0; row < gridCells; row++) {
+      for (let col = 0; col < gridCells; col++) {
+        // Cell center position
+        const centerX = (col + 0.5) * cellSize;
+        const centerY = (row + 0.5) * cellSize;
+        
+        // Apply jitter offset
+        const maxJitter = cellSize * jitterAmount;
+        const jitterX = (Math.random() - 0.5) * 2 * maxJitter;
+        const jitterY = (Math.random() - 0.5) * 2 * maxJitter;
+        
+        const x = centerX + jitterX;
+        const y = centerY + jitterY;
+        
+        // Select random source based on probability
+        const sourceId = selectRandomSource();
+        
+        // Get the leaf canvas to determine its size
+        const leafLayers = extractedLeaves.get(sourceId);
+        const leafCanvas = leafLayers?.get('Color') || leafLayers?.values().next().value;
+        
+        // Calculate base scale to fit leaf within cell size
+        // Scale of 1.0 means the leaf's largest dimension equals the cell size
+        const leafSize = leafCanvas ? Math.max(leafCanvas.width, leafCanvas.height) : cellSize;
+        const baseScale = cellSize / leafSize;
+        
+        // Random rotation 0-360
+        const rotation = Math.random() * 360;
+        
+        // Random scale within range, proportional to cell size
+        const scaleMultiplier = scaleMin + Math.random() * (scaleMax - scaleMin);
+        const scale = baseScale * scaleMultiplier;
+        
+        // Random flips
+        const flipX = Math.random() > 0.5;
+        const flipY = Math.random() > 0.5;
+        
+        newPlaced.push({
+          id: `scatter_${Date.now()}_${zIndex}`,
+          sourceId,
+          x,
+          y,
+          rotation,
+          scale,
+          flipX,
+          flipY,
+          zIndex,
+        });
+        
+        zIndex++;
+      }
+    }
+    
+    // Shuffle z-order for more natural layering
+    for (let i = newPlaced.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [newPlaced[i], newPlaced[j]] = [newPlaced[j], newPlaced[i]];
+      newPlaced[i].zIndex = i;
+      newPlaced[j].zIndex = j;
+    }
+    
+    // Sort by zIndex for rendering
+    newPlaced.sort((a, b) => a.zIndex - b.zIndex);
+    
+    setPlacedLeaves(newPlaced);
+  }, [scatterSettings, extractedLeaves, gridCells, jitterAmount, scaleMin, scaleMax]);
+
+  // Update probability for a specific leaf
+  const updateProbability = useCallback((sourceId: number, probability: number) => {
+    setScatterSettings(prev => prev.map(s => 
+      s.sourceId === sourceId ? { ...s, probability: Math.max(0, Math.min(1, probability)) } : s
+    ));
+  }, []);
+
+  // Toggle scatter enabled for a specific leaf
+  const toggleScatterEnabled = useCallback((sourceId: number) => {
+    setScatterSettings(prev => prev.map(s => 
+      s.sourceId === sourceId ? { ...s, enabled: !s.enabled } : s
+    ));
   }, []);
 
   // Handle loading from source browser
@@ -191,6 +312,13 @@ export function LeafTextureEditor() {
       setDetectedLeaves([]);
     }
   }, [atlas, threshold, minArea]);
+
+  // Auto-scatter when settings change
+  useEffect(() => {
+    if (extractedLeaves.size > 0 && scatterSettings.length > 0) {
+      scatterLeaves();
+    }
+  }, [gridCells, jitterAmount, scaleMin, scaleMax, scatterSettings, extractedLeaves.size]);
 
   // Render source canvas with detected bounds overlay
   useEffect(() => {
@@ -291,11 +419,14 @@ export function LeafTextureEditor() {
     // Clear with checkerboard for transparency
     drawCheckerboard(ctx, canvas.width, canvas.height);
     
+    // Sort by zIndex for proper layering
+    const sortedLeaves = [...placedLeaves].sort((a, b) => a.zIndex - b.zIndex);
+    
     // Draw placed leaves
     ctx.save();
     ctx.scale(PREVIEW_SCALE, PREVIEW_SCALE);
     
-    for (const placed of placedLeaves) {
+    for (const placed of sortedLeaves) {
       const bounds = detectedLeaves.find(b => b.id === placed.sourceId);
       if (!bounds) continue;
       
@@ -354,7 +485,7 @@ export function LeafTextureEditor() {
         ctx.restore();
       }
       
-      drawPlacedLeaf(ctx, leafCanvas, placed, bounds);
+      drawPlacedLeaf(ctx, leafCanvas, placed, bounds, OUTPUT_SIZE);
     }
     
     ctx.restore();
@@ -479,6 +610,7 @@ export function LeafTextureEditor() {
         scale: 1,
         flipX: false,
         flipY: false,
+        zIndex: placedLeaves.length + index,
       });
       
       index++;
@@ -516,6 +648,7 @@ export function LeafTextureEditor() {
       id: `leaf_${Date.now()}`,
       x: original.x + 50,
       y: original.y + 50,
+      zIndex: placedLeaves.length,
     };
     
     setPlacedLeaves(prev => [...prev, newLeaf]);
@@ -535,6 +668,9 @@ export function LeafTextureEditor() {
     const canvases = new Map<LayerType, HTMLCanvasElement>();
     if (!atlas) return canvases;
     
+    // Sort by zIndex for proper layering
+    const sortedLeaves = [...placedLeaves].sort((a, b) => a.zIndex - b.zIndex);
+    
     for (const [layerType] of atlas.layers) {
       const canvas = document.createElement('canvas');
       canvas.width = OUTPUT_SIZE;
@@ -548,7 +684,7 @@ export function LeafTextureEditor() {
       }
       
       // Draw all placed leaves
-      for (const placed of placedLeaves) {
+      for (const placed of sortedLeaves) {
         const leafLayers = extractedLeaves.get(placed.sourceId);
         if (!leafLayers) continue;
         
@@ -558,7 +694,7 @@ export function LeafTextureEditor() {
         const bounds = detectedLeaves.find(b => b.id === placed.sourceId);
         if (!bounds) continue;
         
-        drawPlacedLeaf(ctx, leafCanvas, placed, bounds);
+        drawPlacedLeaf(ctx, leafCanvas, placed, bounds, OUTPUT_SIZE);
       }
       
       canvases.set(layerType, canvas);
@@ -850,6 +986,92 @@ export function LeafTextureEditor() {
                 Export All Layers
               </button>
             </div>
+
+            {/* Scatter controls */}
+            {scatterSettings.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-700">
+                <div className="flex items-center gap-4 mb-2 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-300">Scatter Settings</span>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-gray-400">Grid:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={gridCells}
+                      onChange={(e) => setGridCells(Math.max(1, Number(e.target.value)))}
+                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                    />
+                    <span className="text-gray-500">×</span>
+                    <span className="text-gray-400">{gridCells}</span>
+                    <span className="text-gray-500 ml-1">({gridCells * gridCells} leaves)</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-gray-400">Jitter:</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={jitterAmount}
+                      onChange={(e) => setJitterAmount(Number(e.target.value))}
+                      className="w-16"
+                    />
+                    <span className="text-gray-400 w-8">{Math.round(jitterAmount * 100)}%</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-gray-400">Scale:</span>
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="5"
+                      step="0.1"
+                      value={scaleMin}
+                      onChange={(e) => setScaleMin(Number(e.target.value))}
+                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                    />
+                    <span className="text-gray-500">-</span>
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="5"
+                      step="0.1"
+                      value={scaleMax}
+                      onChange={(e) => setScaleMax(Number(e.target.value))}
+                      className="w-12 px-1 py-0.5 bg-gray-700 rounded text-center"
+                    />
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 mb-2">Leaf probabilities (higher = more likely to be selected):</div>
+                <div className="grid grid-cols-4 gap-2 max-h-24 overflow-y-auto">
+                  {scatterSettings.map(settings => (
+                    <div 
+                      key={settings.sourceId}
+                      className={`flex items-center gap-1 p-1 rounded ${settings.enabled ? 'bg-gray-700' : 'bg-gray-800 opacity-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={settings.enabled}
+                        onChange={() => toggleScatterEnabled(settings.sourceId)}
+                        className="w-3 h-3"
+                      />
+                      <span className="text-xs text-gray-400 w-6">#{settings.sourceId}</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.1"
+                        value={settings.probability}
+                        onChange={(e) => updateProbability(settings.sourceId, Number(e.target.value))}
+                        className="w-12 h-3"
+                        disabled={!settings.enabled}
+                      />
+                      <span className="text-xs text-gray-500 w-6">{Math.round(settings.probability * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Transform controls for selected leaf */}

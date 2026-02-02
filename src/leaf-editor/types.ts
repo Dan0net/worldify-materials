@@ -22,6 +22,7 @@ export interface PlacedLeaf {
   scale: number;
   flipX: boolean;
   flipY: boolean;
+  zIndex: number;    // Layer order (higher = on top)
 }
 
 export interface TextureLayer {
@@ -52,6 +53,13 @@ export const LAYER_PATTERNS: Record<LayerType, string[]> = {
 // Layer types to look for when loading
 export const REQUIRED_LAYERS: LayerType[] = ['Color', 'Opacity'];
 export const OPTIONAL_LAYERS: LayerType[] = ['NormalGL', 'NormalDX', 'Roughness', 'Displacement'];
+
+// Scatter settings per source leaf
+export interface ScatterSettings {
+  sourceId: number;
+  probability: number;  // Weight for random selection (0-1)
+  enabled: boolean;     // Include in scatter
+}
 
 export interface SourceFolder {
   name: string;
